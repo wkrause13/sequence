@@ -17,7 +17,7 @@
 // without the use regular expressions. It can parse over 100,000 messages per
 // second without the need to separate parsing rules by log source type.
 //
-// Documentation and other information are available at sequence.trustpath.com
+// Documentation and other information are available at sequencer.io
 package main
 
 import (
@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/pprof"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,34 @@ var (
 const (
 	mbyte = 1024 * 1024
 )
+
+type dataSlice []sortableStruct
+
+type pMapStruct struct {
+	ex  string
+	cnt int
+}
+
+type sortableStruct struct {
+	ex  string
+	cnt int
+	pat string
+}
+
+// Len is part of sort.Interface.
+func (d dataSlice) Len() int {
+	return len(d)
+}
+
+// Swap is part of sort.Interface.
+func (d dataSlice) Swap(i, j int) {
+	d[i], d[j] = d[j], d[i]
+}
+
+// Less is part of sort.Interface. We use count as the value to sort by
+func (d dataSlice) Less(i, j int) bool {
+	return d[i].cnt > d[j].cnt
+}
 
 func profile() {
 	var f *os.File
@@ -159,14 +188,8 @@ func analyze(cmd *cobra.Command, args []string) {
 	iscan, ifile = openInputFile(infile)
 	defer ifile.Close()
 
-	pmap := make(map[string]struct {
-		ex  string
-		cnt int
-	})
-	amap := make(map[string]struct {
-		ex  string
-		cnt int
-	})
+	pmap := make(map[string]pMapStruct)
+	amap := make(map[string]pMapStruct)
 	n := 0
 
 	// Now that we have built the analyzer, let's go through each log message again
@@ -216,12 +239,22 @@ func analyze(cmd *cobra.Command, args []string) {
 	ofile := openOutputFile(outfile)
 	defer ofile.Close()
 
-	for pat, stat := range pmap {
-		fmt.Fprintf(ofile, "%s\n# %d log messages matched\n# %s\n\n", pat, stat.cnt, stat.ex)
-	}
+	// for pat, stat := range pmap {
+	// 	fmt.Fprintf(ofile, "%s\n# %d log messages matched\n# %s\n\n", pat, stat.cnt, stat.ex)
+	// }
 
-	for pat, stat := range amap {
-		fmt.Fprintf(ofile, "%s\n# %d log messages matched\n# %s\n\n", pat, stat.cnt, stat.ex)
+	// for pat, stat := range amap {
+	// 	fmt.Fprintf(ofile, "%s\n# %d log messages matched\n# %s\n\n", pat, stat.cnt, stat.ex)
+	// }
+
+	s := make(dataSlice, 0, len(amap))
+
+	for pat, d := range amap {
+		s = append(s, sortableStruct{ex: d.ex, cnt: d.cnt, pat: pat})
+	}
+	sort.Sort(s)
+	for _, stat := range s {
+		fmt.Fprintf(ofile, "# %d log messages matched\n%v\n# %s\n\n", stat.cnt, stat.pat, stat.ex)
 	}
 
 	log.Printf("Analyzed %d messages, found %d unique patterns, %d are new.", n, len(pmap)+len(amap), len(amap))
